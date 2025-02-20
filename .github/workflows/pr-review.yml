@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       contains(github.event.pull_request.requested_reviewers.*.login, 'jainilsevalia') ||
-      contains(github.event.pull_request.requested_reviewers.*.login, 'shivam-patel-123') 
+      contains(github.event.pull_request.requested_reviewers.*.login, 'jayramani') 
     permissions:
       pull-requests: write
       contents: read
