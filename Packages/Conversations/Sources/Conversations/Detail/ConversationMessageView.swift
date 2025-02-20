@@ -19,6 +19,8 @@ struct ConversationMessageView: View {
 
   @State private var isLiked: Bool = false
   @State private var isBookmarked: Bool = false
+  @State private var showingReactionPicker: Bool = false
+  @State private var currentReaction: String? = nil
 
   var body: some View {
     let isOwnMessage = message.account.id == currentAccount.account?.id
@@ -44,6 +46,10 @@ struct ConversationMessageView: View {
               OpenURLAction { url in
                 routerPath.handleStatus(status: message, url: url)
               })
+            .overlay(alignment: .bottomTrailing) {
+              reactionView
+                .padding(4)
+            }
         }
         #if os(visionOS)
           .background(isOwnMessage ? Material.ultraThick : Material.regular)
@@ -60,6 +66,18 @@ struct ConversationMessageView: View {
         }
         .contextMenu {
           contextMenu
+        }
+        .onLongPressGesture(minimumDuration: 0.5) {
+          withAnimation {
+            showingReactionPicker = true
+          }
+        }
+        .overlay(alignment: .top) {
+          if showingReactionPicker {
+            reactionPickerView
+              .offset(y: -50)
+              .transition(.move(edge: .top).combined(with: .opacity))
+          }
         }
 
         if !isOwnMessage {
@@ -93,6 +111,10 @@ struct ConversationMessageView: View {
     .onAppear {
       isLiked = message.favourited == true
       isBookmarked = message.bookmarked == true
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .init("DismissReactionPicker"))) { _ in
+      showingReactionPicker = false
+      currentReaction = nil
     }
   }
 
@@ -232,6 +254,38 @@ struct ConversationMessageView: View {
           .foregroundColor(.yellow)
           .offset(x: -16, y: -7)
         Spacer()
+      }
+    }
+  }
+
+  private let availableReactions = ["👍", "❤️", "😂", "😮", "😢", "👏"]
+
+  private var reactionPickerView: some View {
+    HStack(spacing: -5) {
+      ForEach(availableReactions, id: \.self) { reaction in
+        Text(reaction)
+          .font(.title2)
+          .frame(width: 20)
+          .onTapGesture {
+            currentReaction = reaction
+            showingReactionPicker.toggle()
+          }
+      }
+    }
+    .padding(.horizontal, -8)
+    .background(Color.clear)
+    .offset(y: -100)
+  }
+
+  private var reactionView: some View {
+    Group {
+      if let reaction = currentReaction {
+        Text(reaction)
+          .font(.system(size: 50))
+          .padding(-2)
+          .background(Color.clear)
+          .clipShape(Circle())
+          .offset(x: 100, y: 100)
       }
     }
   }
