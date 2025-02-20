@@ -30,23 +30,60 @@ async function getReview(anthropic, content, filename, core) {
       max_tokens: 1000,
       messages: [{
         role: 'user',
-        content: `You are a seasoned Senior Developer reviewing code changes. Analyze the changes and provide specific feedback.
-        Important: Format your response as a JSON array of objects, where each object represents a single review comment with the following structure:
-        {
-          "line": <line_number_in_diff>,
-          "comment": "Your specific feedback for this line"
-        }
-        
-        Keep each comment focused on a single issue. Be specific, direct, and professional.
-        
-        File: ${filename}
-        Changes:
-        ${content}`
+        content: `As a Senior Developer, review the following code changes and provide specific feedback.
+
+IMPORTANT - You must format your response EXACTLY as a JSON array like this example:
+[
+  {
+    "line": 12,
+    "comment": "Consider using const instead of let here since the value isn't reassigned"
+  },
+  {
+    "line": 45,
+    "comment": "This loop could be simplified using Array.map()"
+  }
+]
+
+Rules:
+1. Each comment must reference a specific line number from the diff
+2. Comments must be short and specific to that line
+3. The line number must be the actual line number from the new file
+4. Response must be valid JSON that can be parsed
+5. Do not include any text outside the JSON array
+
+Here are the changes to review:
+File: ${filename}
+Diff:
+${content}`
       }]
     });
 
     const reviewText = response?.content?.[0]?.text?.trim() || null;
-    return JSON.parse(reviewText);
+    
+    // Validate JSON response
+    let reviews;
+    try {
+      reviews = JSON.parse(reviewText);
+      if (!Array.isArray(reviews)) {
+        throw new Error('Response is not an array');
+      }
+      
+      // Validate each review object
+      reviews = reviews.filter(review => {
+        return (
+          typeof review === 'object' &&
+          typeof review.line === 'number' &&
+          typeof review.comment === 'string' &&
+          review.line > 0 &&
+          review.comment.length > 0
+        );
+      });
+      
+      return reviews;
+    } catch (error) {
+      core.warning(`Invalid review format received: ${error.message}`);
+      return null;
+    }
   } catch (error) {
     core.error(`Failed to generate review for ${filename}: ${error.message}`);
     return null;
