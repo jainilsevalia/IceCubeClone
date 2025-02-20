@@ -26,19 +26,27 @@ async function getReview(anthropic, content, filename, core) {
   try {
     core.info(`Requesting review from Claude for ${filename}...`);
     const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022', // Updated to latest model
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1000,
       messages: [{
         role: 'user',
-        // content: `Review this code change and provide 1-2 key suggestions or concerns, focusing only on the most important issues. Be brief and specific:
-        content: `You are a seasoned Senior Developer reviewing a code change. Provide insightful, constructive feedback, identifying logical issues, performance concerns, or maintainability improvements. If possible, add a humorous twist to keep it engaging. Be specific and direct. Do not add long comments. Be a real dev who add comments that make sense and would be short. 
+        content: `You are a seasoned Senior Developer reviewing code changes. Analyze the changes and provide specific feedback.
+        Important: Format your response as a JSON array of objects, where each object represents a single review comment with the following structure:
+        {
+          "line": <line_number_in_diff>,
+          "comment": "Your specific feedback for this line"
+        }
         
-File: ${filename}
-Changes:
-${content}`
+        Keep each comment focused on a single issue. Be specific, direct, and professional.
+        
+        File: ${filename}
+        Changes:
+        ${content}`
       }]
     });
-    return response?.content?.[0]?.text?.trim() || null;
+
+    const reviewText = response?.content?.[0]?.text?.trim() || null;
+    return JSON.parse(reviewText);
   } catch (error) {
     core.error(`Failed to generate review for ${filename}: ${error.message}`);
     return null;
@@ -83,50 +91,60 @@ async function reviewPR({ github, context, core }) {
 
       try {
         core.info(`Fetching content for file: ${file.filename}`);
-        // Use file.patch if available; otherwise, assume "New file"
         const patch = file.patch || 'New file';
 
         core.info(`Reviewing file: ${file.filename}`);
-        const review = await getReview(anthropic, patch, file.filename, core);
+        const reviews = await getReview(anthropic, patch, file.filename, core);
 
-        if (review) {
-          core.info(`Creating review comment for file: ${file.filename}`);
-
-          if (!file.patch) {
-            core.warning(`Skipping file ${file.filename} - no patch available to determine diff position`);
-            continue;
-          }
-
-          // Compute the "position" as the relative line index in the patch diff
-          const patchLines = file.patch.split('\n');
-          let position = null;
-          for (let i = 0; i < patchLines.length; i++) {
-            const line = patchLines[i];
-            // Skip diff headers or file info lines
-            if (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')) {
+        if (reviews && Array.isArray(reviews)) {
+          for (const review of reviews) {
+            if (!file.patch) {
+              core.warning(`Skipping file ${file.filename} - no patch available`);
               continue;
             }
-            // Use the first added line as the comment position
-            if (line.startsWith('+')) {
-              position = i + 1; // GitHub expects 1-indexed positions
-              break;
+
+            const patchLines = file.patch.split('\n');
+            let lineCounter = 0;
+            let position = null;
+
+            // Find the actual position in the diff for the specified line
+            for (let i = 0; i < patchLines.length; i++) {
+              const line = patchLines[i];
+              if (line.startsWith('@@')) {
+                // Parse the @@ -a,b +c,d @@ line to get starting line number
+                const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+                if (match) {
+                  lineCounter = parseInt(match[1]) - 1;
+                  continue;
+                }
+              }
+              
+              if (!line.startsWith('---') && !line.startsWith('+++')) {
+                if (!line.startsWith('-')) {
+                  lineCounter++;
+                }
+                
+                if (lineCounter === review.line) {
+                  position = i + 1;
+                  break;
+                }
+              }
+            }
+
+            if (position) {
+              await github.rest.pulls.createReviewComment({
+                ...context.repo,
+                pull_number: context.payload.pull_request.number,
+                body: review.comment,
+                commit_id: pullRequest.head.sha,
+                path: file.filename,
+                position: position,
+              });
+              processedFiles++;
+            } else {
+              core.warning(`Could not find position for line ${review.line} in ${file.filename}`);
             }
           }
-
-          if (position === null) {
-            core.warning(`Skipping file ${file.filename} - no valid added line found in diff for comment position`);
-            continue;
-          }
-
-          await github.rest.pulls.createReviewComment({
-            ...context.repo,
-            pull_number: context.payload.pull_request.number,
-            body: review,
-            commit_id: pullRequest.head.sha,
-            path: file.filename,
-            position: position,
-          });
-          processedFiles++;
         }
       } catch (error) {
         if (error.status !== 404) {
