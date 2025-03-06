@@ -70,6 +70,11 @@ public struct ConversationDetailView: View {
           }
         }
       }
+      .onTapGesture {
+        withAnimation {
+          NotificationCenter.default.post(name: .init("DismissReactionPicker"), object: nil)
+        }
+      }
     }
     .navigationBarTitleDisplayMode(.inline)
     #if !os(visionOS)
